@@ -28,6 +28,7 @@ import os
 import math
 import json
 
+import requests
 import pandas as pd
 from arcgis.gis import GIS
 from arcgis.features import FeatureLayer
@@ -54,6 +55,14 @@ ORIGIN_RAMP = "El Jobean"     # change to any key above
 RADIUS_NM   = 15              # nautical miles to include
 COUNTY      = "Charlotte"     # try 'Lee' or 'Sarasota' too
 
+# FL DEP aquatic-preserve polygons (Milestone 3). Envelope filter keeps the
+# payload to just the Charlotte Harbor / SW Florida preserves.
+PRESERVE_QUERY = (
+    "https://ca.dep.state.fl.us/arcgis/rest/services/OpenData/"
+    "AQUATIC_PRESERVES/MapServer/0/query"
+)
+HARBOR_BBOX = "-82.75,26.40,-81.80,27.25"   # xmin,ymin,xmax,ymax (lon/lat)
+
 
 # ---------------------------------------------------------------------------
 # Distance helper (geodesic, no extra dependencies)
@@ -77,6 +86,89 @@ def haversine_nm(lat1, lon1, lat2, lon2):
 
 
 # ---------------------------------------------------------------------------
+# Aquatic preserves + point-in-polygon (Milestone 3)
+# ---------------------------------------------------------------------------
+
+def fetch_preserves(bbox):
+    """Pull aquatic-preserve polygons intersecting bbox, as GeoJSON (WGS84).
+
+    Uses a plain REST call (requests) rather than the arcgis SDK. Mixing the
+    SDK with raw REST is normal integration work, and here it keeps the polygon
+    payload small via the envelope filter plus maxAllowableOffset (which asks the
+    server to generalize the shorelines so the map stays light).
+    """
+    params = {
+        "where": "1=1",
+        "geometry": bbox,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "NAME,COUNTIES",
+        "returnGeometry": "true",
+        "maxAllowableOffset": "0.0004",   # ~40 m; generalizes the boundary
+        "geometryPrecision": "5",
+        "f": "geojson",
+    }
+    r = requests.get(PRESERVE_QUERY, params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()   # a GeoJSON FeatureCollection
+
+
+def _preserve_index(geojson):
+    """Flatten GeoJSON features into [{name, polys}] for fast point tests.
+
+    Each `polys` entry is one polygon: [outer_ring, hole_ring, ...]. A
+    MultiPolygon contributes several such entries.
+    """
+    idx = []
+    for feat in geojson.get("features", []):
+        name = (feat.get("properties") or {}).get("NAME") or ""
+        geom = feat.get("geometry") or {}
+        gtype = geom.get("type")
+        coords = geom.get("coordinates") or []
+        if gtype == "Polygon":
+            polys = [coords]
+        elif gtype == "MultiPolygon":
+            polys = coords
+        else:
+            polys = []
+        idx.append({"name": name, "polys": polys})
+    return idx
+
+
+def _in_ring(x, y, ring):
+    """Ray-casting point-in-polygon for a single ring of [lon, lat] pairs."""
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+        if ((yi > y) != (yj > y)) and \
+           (x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-15) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _in_polygon(x, y, poly):
+    """poly = [outer, hole1, ...]. Inside outer and outside every hole."""
+    if not poly or not _in_ring(x, y, poly[0]):
+        return False
+    return not any(_in_ring(x, y, hole) for hole in poly[1:])
+
+
+def preserve_for_point(lon, lat, index):
+    """Return the name of the preserve containing (lon, lat), or ''."""
+    for p in index:
+        for poly in p["polys"]:
+            if _in_polygon(lon, lat, poly):
+                return p["name"]
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Map output (self-contained Leaflet HTML; open in a browser)
 # ---------------------------------------------------------------------------
 
@@ -92,30 +184,34 @@ MAP_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm</div>
+<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#1E8449">&#9632;</span> aquatic preserve</div>
 <script>
 var reefs = __DATA__;
+var preserves = __PRESERVES__;
 var origin = [__LAT__, __LON__];
-var map = L.map('map');
+var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
-L.marker(origin).addTo(map).bindPopup('Ramp: __RAMP__');
+try {
+  L.geoJSON(preserves, {style:{color:'#1E8449', weight:1, fillColor:'#1E8449', fillOpacity:0.15},
+    onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.NAME)||'Aquatic Preserve');}}).addTo(map);
+} catch(e) { console.error('preserve layer failed:', e); }
 L.circle(origin, {radius:__RADIUSM__, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
-var pts = [origin];
+L.circleMarker(origin, {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpacity:1, weight:2})
+  .addTo(map).bindPopup('Ramp: __RAMP__');
 reefs.forEach(function(f){
-  var c = L.circleMarker([f.lat, f.lon],
-    {radius:6, color:'#2E86C1', fillColor:'#2E86C1', fillOpacity:0.85, weight:1}).addTo(map);
-  c.bindPopup('<b>'+f.name+'</b><br>'+f.dist+' nm &middot; '+(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material);
-  pts.push([f.lat, f.lon]);
+  L.circleMarker([f.lat, f.lon],
+    {radius:6, color:'#0B3D6B', fillColor:'#2E86C1', fillOpacity:0.95, weight:1}).addTo(map)
+   .bindPopup('<b>'+f.name+'</b><br>'+f.dist+' nm &middot; '+(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material+(f.preserve?'<br><i>'+f.preserve+'</i>':''));
 });
-map.fitBounds(pts, {padding:[30,30]});
+console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).length)+' preserves');
 </script>
 </body>
 </html>"""
 
 
-def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, out_path):
-    """Write a self-contained Leaflet map of the reefs and the ramp."""
+def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojson, out_path):
+    """Write a self-contained Leaflet map of the reefs, ramp, and preserves."""
     reefs = []
     for _, r in df.iterrows():
         depth = r.get("Depth")
@@ -126,11 +222,26 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, out_path):
             "depth": None if (depth is None or pd.isna(depth)) else round(float(depth)),
             "material": str(r.get("MatCat") or ""),
             "dist": round(float(r["dist_nm"]), 1),
+            "preserve": str(r.get("preserve") or ""),
         })
+    # Explicit view bounds: reef points plus the ramp's range ring, so the map
+    # always frames the cluster deterministically (no reliance on auto-fit).
+    lats = [origin_lat] + [r["lat"] for r in reefs]
+    lons = [origin_lon] + [r["lon"] for r in reefs]
+    dlat = radius_nm / 60.0
+    dlon = radius_nm / (60.0 * max(0.1, math.cos(math.radians(origin_lat))))
+    south = min(min(lats), origin_lat - dlat)
+    north = max(max(lats), origin_lat + dlat)
+    west = min(min(lons), origin_lon - dlon)
+    east = max(max(lons), origin_lon + dlon)
+
     html = (MAP_TEMPLATE
             .replace("__DATA__", json.dumps(reefs))
+            .replace("__PRESERVES__", json.dumps(preserves_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
+            .replace("__S__", str(south)).replace("__N__", str(north))
+            .replace("__W__", str(west)).replace("__E__", str(east))
             .replace("__RADIUSM__", str(radius_nm * 1852.0))
             .replace("__RADNM__", str(radius_nm))
             .replace("__RAMP__", ramp_name))
@@ -178,14 +289,27 @@ def main():
         axis=1,
     )
 
+    # --- Milestone 3: tag each reef with the aquatic preserve it sits in ---
+    try:
+        preserves_geojson = fetch_preserves(HARBOR_BBOX)
+        pidx = _preserve_index(preserves_geojson)
+        sdf["preserve"] = sdf.apply(
+            lambda row: preserve_for_point(row["Long_DD"], row["Lat_DD"], pidx), axis=1)
+        print(f"Loaded {len(pidx)} aquatic preserve(s) in the harbor area.")
+    except Exception as e:
+        print(f"(Preserve layer unavailable, skipping tag: {e})")
+        preserves_geojson = None
+        sdf["preserve"] = ""
+
     nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
-    cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "Lat_DD", "Long_DD"]
+    cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "Lat_DD", "Long_DD"]
 
     print(f"\nReefs within {RADIUS_NM} nm of {ORIGIN_RAMP} "
           f"({origin_lat:.4f}, {origin_lon:.4f}):\n")
     for _, r in nearby[cols].iterrows():
         depth = f"{r['Depth']:.0f}ft" if r["Depth"] else "  ? "
-        print(f"  {r['dist_nm']:5.1f} nm  {depth:>6}  {str(r['MatCat'] or ''):8}  {r['Name']}")
+        pres = f"  ·  {r['preserve']}" if r["preserve"] else ""
+        print(f"  {r['dist_nm']:5.1f} nm  {depth:>6}  {str(r['MatCat'] or ''):8}  {r['Name']}{pres}")
 
     here = os.path.dirname(os.path.abspath(__file__))
     out_csv = os.path.join(here, "harbor_reefs_nearby.csv")
@@ -193,7 +317,7 @@ def main():
     print(f"\nWrote {len(nearby)} rows to {out_csv}")
 
     out_map = os.path.join(here, "harbor_map.html")
-    write_map(nearby, ORIGIN_RAMP, origin_lat, origin_lon, RADIUS_NM, out_map)
+    write_map(nearby, ORIGIN_RAMP, origin_lat, origin_lon, RADIUS_NM, preserves_geojson, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 
 
