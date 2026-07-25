@@ -1,0 +1,16 @@
+# Generated outputs (recreated on every run)
+harbor_map.html
+harbor_reefs_nearby.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Never commit secrets
+*.key
+.env
