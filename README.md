@@ -56,9 +56,11 @@ refresh the browser.
 
 - `harbor_spots.py` — pulls the layers, does the spatial work, writes the map.
 - `.github/workflows/build-map.yml` — weekly rebuild + Pages deploy.
-- `publish_spots.py` — optional: publishes the reef shortlist as your own hosted
-  ArcGIS feature layer (needs an ArcGIS Location Platform key with content
-  privileges; not part of the public build).
+- `publish_spots.py` — optional: uploads the reef shortlist to ArcGIS as a
+  content item using an API key, the first half of the write-back. Publishing
+  that item into a hosted feature layer, and sharing it, require a signed-in user
+  (ArcGIS UI or OAuth), not an API key, on a Location Platform account; the script
+  prints the item link to finish the publish there. Not part of the public build.
 
 ---
 © Brian Beals, LLC · brianbeals.com

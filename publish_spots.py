@@ -1,20 +1,23 @@
 """
-Harbor Spots — Milestone 5: publish your own hosted feature layer.
+Harbor Spots — upload the reef CSV to ArcGIS as a content item.
 
-Uploads the nearby-reefs CSV as an item in your ArcGIS content and publishes it
-into a hosted feature layer, using the publish-scoped API key.
+Uploads the nearby-reefs CSV to your ArcGIS content over the REST API, using an
+API key as the token. Uploading works with a content-scoped API key.
 
-This talks to the ArcGIS REST API directly with `requests`, using the API key
-as the token. We do that (instead of the arcgis Python SDK) because the SDK
-treats an API-key session as anonymous for content operations. The key itself
-carries the content privileges, so the raw REST calls are authorized.
+Learned the hard way: on an ArcGIS Location Platform account you cannot *publish*
+the uploaded item into a hosted feature layer with an API key, nor share it
+publicly. Those operations require a signed-in user (the ArcGIS Online web UI or
+an OAuth user token). So this script gets the data into ArcGIS; you finish the
+publish from the item's page (Publish button). That upload-by-API, publish-by-user
+split is common in real integrations.
 
 Run:
-  export ARCGIS_API_KEY="<your PUBLISH-scoped key>"
+  export ARCGIS_API_KEY="<your content-scoped key>"
   python3 publish_spots.py
+  # then open the uploaded item in ArcGIS and click Publish
 
-Requires the privileges we scoped on the publish key:
-"Create, update, and delete content" and "Publish hosted feature layers".
+Each run uploads a fresh timestamped item. Delete old ones from your ArcGIS
+content when tidying up.
 
 © Brian Beals, LLC · brianbeals.com
 """
@@ -93,14 +96,12 @@ def main():
     pub = r2.json()
 
     if "error" in pub:
-        print("\nPublish failed:")
+        print("\nPublish via API key was refused (expected on Location Platform):")
         print(json.dumps(pub["error"], indent=2))
-        msg = json.dumps(pub["error"]).lower()
-        if "credit" in msg or "billing" in msg or "subscription" in msg or "pay" in msg:
-            print("\nThis looks like the billing gate. Enable pay-as-you-go in the")
-            print("Location Platform dashboard (Billing tab), then re-run. Your data is")
-            print("tiny, so it stays in the free tier. The CSV item already uploaded.")
-        raise SystemExit(1)
+        print("\nThe CSV item uploaded fine. Publishing a hosted feature layer needs")
+        print("a signed-in user, so open the item in ArcGIS and click Publish:")
+        print(f"  {ORG}/home/item.html?id={item_id}")
+        raise SystemExit(0)
 
     svc = (pub.get("services") or [{}])[0]
     svc_item = svc.get("serviceItemId")
