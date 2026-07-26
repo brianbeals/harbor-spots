@@ -51,8 +51,8 @@ RAMPS = {
     "Port Charlotte Beach": (26.9830, -82.0780),
 }
 
-ORIGIN_RAMP = "El Jobean"     # change to any key above
-RADIUS_NM   = 15              # nautical miles to include
+ORIGIN_RAMP = "Ponce de Leon" # matched against the live ramp name OR city
+RADIUS_NM   = 20              # nautical miles to include
 COUNTY      = "Charlotte"     # try 'Lee' or 'Sarasota' too
 
 # FL DEP aquatic-preserve polygons (Milestone 3). Envelope filter keeps the
@@ -62,6 +62,13 @@ PRESERVE_QUERY = (
     "AQUATIC_PRESERVES/MapServer/0/query"
 )
 HARBOR_BBOX = "-82.75,26.40,-81.80,27.25"   # xmin,ymin,xmax,ymax (lon/lat)
+
+# FWC Florida Boat Ramp Inventory (Milestone 3). Real ramps replace the
+# hard-coded coordinates: we plot every county ramp and pick the origin from it.
+RAMP_LAYER_URL = (
+    "https://gis.myfwc.com/mapping/rest/services/Open_Data/"
+    "FWC_Florida_Boat_Ramp_Inventory/MapServer/4"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +191,11 @@ MAP_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#1E8449">&#9632;</span> aquatic preserve</div>
+<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#1E8449">&#9632;</span> aquatic preserve</div>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
+var ramps = __RAMPS__;
 var origin = [__LAT__, __LON__];
 var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -197,6 +205,10 @@ try {
     onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.NAME)||'Aquatic Preserve');}}).addTo(map);
 } catch(e) { console.error('preserve layer failed:', e); }
 L.circle(origin, {radius:__RADIUSM__, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
+ramps.forEach(function(r){
+  L.circleMarker([r.lat, r.lon], {radius:5, color:'#7E5109', fillColor:'#F39C12', fillOpacity:0.9, weight:1}).addTo(map)
+   .bindPopup('<b>'+r.name+'</b>'+(r.water?'<br>'+r.water:'')+(r.lanes?'<br>'+r.lanes+' lanes':''));
+});
 L.circleMarker(origin, {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpacity:1, weight:2})
   .addTo(map).bindPopup('Ramp: __RAMP__');
 reefs.forEach(function(f){
@@ -210,8 +222,9 @@ console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).l
 </html>"""
 
 
-def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojson, out_path):
-    """Write a self-contained Leaflet map of the reefs, ramp, and preserves."""
+def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojson, ramps, out_path):
+    """Write a self-contained Leaflet map of the reefs, ramps, and preserves."""
+    ramps = ramps or []
     reefs = []
     for _, r in df.iterrows():
         depth = r.get("Depth")
@@ -224,10 +237,10 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojso
             "dist": round(float(r["dist_nm"]), 1),
             "preserve": str(r.get("preserve") or ""),
         })
-    # Explicit view bounds: reef points plus the ramp's range ring, so the map
-    # always frames the cluster deterministically (no reliance on auto-fit).
-    lats = [origin_lat] + [r["lat"] for r in reefs]
-    lons = [origin_lon] + [r["lon"] for r in reefs]
+    # Explicit view bounds: reef points, all ramps, plus the range ring, so the
+    # map always frames the area deterministically (no reliance on auto-fit).
+    lats = [origin_lat] + [r["lat"] for r in reefs] + [r["lat"] for r in ramps]
+    lons = [origin_lon] + [r["lon"] for r in reefs] + [r["lon"] for r in ramps]
     dlat = radius_nm / 60.0
     dlon = radius_nm / (60.0 * max(0.1, math.cos(math.radians(origin_lat))))
     south = min(min(lats), origin_lat - dlat)
@@ -238,6 +251,7 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojso
     html = (MAP_TEMPLATE
             .replace("__DATA__", json.dumps(reefs))
             .replace("__PRESERVES__", json.dumps(preserves_geojson or {"type": "FeatureCollection", "features": []}))
+            .replace("__RAMPS__", json.dumps(ramps))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
             .replace("__S__", str(south)).replace("__N__", str(north))
@@ -282,8 +296,40 @@ def main():
     if sdf.empty:
         return
 
-    # --- Milestone 2: distance from a ramp to every reef ---
-    origin_lat, origin_lon = RAMPS[ORIGIN_RAMP]
+    # --- Milestone 3: pull county boat ramps from the FWC service ---
+    ramps = []
+    try:
+        ramp_layer = FeatureLayer(RAMP_LAYER_URL)
+        rres = ramp_layer.query(
+            where=f"County = '{COUNTY}'",
+            out_fields="RampName,City,WaterBodyName,TotalLanes,Latitude,Longitude",
+            out_sr=4326, return_geometry=False)
+        for f in rres.features:
+            a = f.attributes
+            if a.get("Latitude") and a.get("Longitude"):
+                ramps.append({
+                    "name": str(a.get("RampName") or "Ramp"),
+                    "lat": float(a["Latitude"]),
+                    "lon": float(a["Longitude"]),
+                    "water": str(a.get("WaterBodyName") or ""),
+                    "lanes": a.get("TotalLanes"),
+                    "city": str(a.get("City") or ""),
+                })
+        print(f"Loaded {len(ramps)} boat ramps in {COUNTY} County.")
+    except Exception as e:
+        print(f"(Ramp layer unavailable: {e})")
+
+    # --- Milestone 2: distance from the origin ramp to every reef ---
+    _q = ORIGIN_RAMP.lower()
+    origin = next((r for r in ramps
+                   if _q in r["name"].lower() or _q in r.get("city", "").lower()), None)
+    if origin:
+        origin_lat, origin_lon, origin_label = origin["lat"], origin["lon"], origin["name"]
+    else:
+        origin_lat, origin_lon = RAMPS.get(ORIGIN_RAMP, (26.9583, -82.2078))
+        origin_label = ORIGIN_RAMP
+    print(f"Origin ramp: {origin_label} ({origin_lat:.4f}, {origin_lon:.4f})")
+
     sdf["dist_nm"] = sdf.apply(
         lambda row: haversine_nm(origin_lat, origin_lon, row["Lat_DD"], row["Long_DD"]),
         axis=1,
@@ -304,7 +350,7 @@ def main():
     nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
     cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "Lat_DD", "Long_DD"]
 
-    print(f"\nReefs within {RADIUS_NM} nm of {ORIGIN_RAMP} "
+    print(f"\nReefs within {RADIUS_NM} nm of {origin_label} "
           f"({origin_lat:.4f}, {origin_lon:.4f}):\n")
     for _, r in nearby[cols].iterrows():
         depth = f"{r['Depth']:.0f}ft" if r["Depth"] else "  ? "
@@ -317,7 +363,7 @@ def main():
     print(f"\nWrote {len(nearby)} rows to {out_csv}")
 
     out_map = os.path.join(here, "harbor_map.html")
-    write_map(nearby, ORIGIN_RAMP, origin_lat, origin_lon, RADIUS_NM, preserves_geojson, out_map)
+    write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM, preserves_geojson, ramps, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 
 
