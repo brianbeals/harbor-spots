@@ -4,13 +4,16 @@
 
 A self-updating map of Charlotte Harbor, Florida that pulls live public GIS
 services and renders artificial reefs, boat ramps, aquatic-preserve boundaries,
-and seagrass beds on one interactive map. Built as a working demonstration of
-ArcGIS / Esri integration: querying government feature services, reconciling
-projections, running spatial joins, and publishing the result.
+seagrass beds, boating restricted/speed zones, and manatee protection zones on
+one interactive map. Built as a working demonstration of ArcGIS / Esri
+integration: querying government feature services, reconciling projections,
+running spatial joins, and publishing the result.
 
 Pick a boat ramp; the map ranks every county reef by distance from it, draws a
 range ring, tags each reef by the aquatic preserve it sits in and whether it
-falls on a seagrass bed, and frames the view on the cluster.
+falls on a seagrass bed, overlays the regulated speed zones (both the general
+boating restricted areas and the manatee protection zones), and frames the view
+on the cluster.
 
 ## Data sources (all public, no key required)
 
@@ -20,11 +23,14 @@ falls on a seagrass bed, and frames the view on the cluster.
 | Boat ramps | FWC Florida Boat Ramp Inventory (ArcGIS REST) |
 | Aquatic preserves | FL DEP Aquatic Preserves (ArcGIS REST) |
 | Seagrass beds | FWC Seagrass Statewide (ArcGIS REST) |
+| Boating restricted / speed zones | FWC State Boating Safety Zones, FAC 68D-24 (ArcGIS REST) |
+| Manatee protection zones | FWC State Manatee Protection Zones, FAC 68C-22 (ArcGIS REST) |
 | Basemap | OpenStreetMap tiles |
 
 Every source is queried live over the ArcGIS REST API. The reef and ramp layers
-carry lat/lon as attributes; the preserve and seagrass polygons are pulled as
-generalized GeoJSON with a bounding-box filter to keep the payload small.
+carry lat/lon as attributes; the preserve, seagrass, boating-zone, and
+manatee-zone polygons are pulled as generalized GeoJSON with a bounding-box
+filter to keep the payload small.
 
 ## What it demonstrates
 
