@@ -81,6 +81,14 @@ ZONES_QUERY = (
     "State_Boating_Safety_Zones_Florida/MapServer/10/query"
 )
 
+# FWC State Manatee Protection Zones (FAC 68C-22): seasonal and year-round
+# speed zones set to protect manatees. Separate rule chapter and dataset from
+# the general boating safety zones above, so it's its own overlay.
+MANATEE_QUERY = (
+    "https://gis.myfwc.com/hosting/rest/services/Open_Data/"
+    "State_Manatee_Protection_Zones_in_Florida/MapServer/9/query"
+)
+
 
 # ---------------------------------------------------------------------------
 # Distance helper (geodesic, no extra dependencies)
@@ -209,6 +217,30 @@ def fetch_zones(bbox):
     return r.json()
 
 
+def fetch_manatee(bbox):
+    """Pull manatee protection-zone polygons intersecting bbox, as GeoJSON.
+
+    Same envelope-filtered REST call. Keeps the restriction text (TEXT_68C),
+    the zone class (MASTER_CL), and the county for the popup.
+    """
+    params = {
+        "where": "1=1",
+        "geometry": bbox,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "MASTER_CL,TEXT_68C,COUNTY",
+        "returnGeometry": "true",
+        "maxAllowableOffset": "0.0003",   # ~30 m; some manatee zones are large
+        "geometryPrecision": "5",
+        "f": "geojson",
+    }
+    r = requests.get(MANATEE_QUERY, params=params, timeout=90)
+    r.raise_for_status()
+    return r.json()
+
+
 def _preserve_index(geojson, field="NAME"):
     """Flatten GeoJSON features into [{name, polys}] for fast point tests.
 
@@ -279,12 +311,13 @@ MAP_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone</div>
+<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone</div>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
 var seagrass = __SEAGRASS__;
 var zones = __ZONES__;
+var manatee = __MANATEE__;
 var ramps = __RAMPS__;
 var origin = [__LAT__, __LON__];
 var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
@@ -301,6 +334,15 @@ try {
   L.geoJSON(preserves, {style:{color:'#2874A6', weight:1.5, fill:false},
     onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.NAME)||'Aquatic Preserve');}}).addTo(map);
 } catch(e) { console.error('preserve layer failed:', e); }
+try {
+  L.geoJSON(manatee, {style:{color:'#5F3DC4', weight:1, fillColor:'#845EF7', fillOpacity:0.22},
+    onEachFeature:function(f,l){
+      var p=f.properties||{};
+      var rest=p.TEXT_68C||p.MASTER_CL||'Manatee Protection Zone';
+      var cty=p.COUNTY?'<br><i>'+p.COUNTY+' County</i>':'';
+      l.bindPopup('<b>Manatee Zone</b><br>'+rest+cty);
+    }}).addTo(map);
+} catch(e) { console.error('manatee layer failed:', e); }
 try {
   L.geoJSON(zones, {style:{color:'#A61E4D', weight:1, fillColor:'#D6336C', fillOpacity:0.28},
     onEachFeature:function(f,l){
@@ -330,7 +372,7 @@ console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).l
 
 
 def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
-              preserves_geojson, seagrass_geojson, zones_geojson, ramps, out_path):
+              preserves_geojson, seagrass_geojson, zones_geojson, manatee_geojson, ramps, out_path):
     """Write a self-contained Leaflet map: reefs, ramps, preserves, seagrass."""
     ramps = ramps or []
     reefs = []
@@ -362,6 +404,7 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
             .replace("__PRESERVES__", json.dumps(preserves_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__SEAGRASS__", json.dumps(seagrass_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__ZONES__", json.dumps(zones_geojson or {"type": "FeatureCollection", "features": []}))
+            .replace("__MANATEE__", json.dumps(manatee_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__RAMPS__", json.dumps(ramps))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
@@ -460,6 +503,14 @@ def main():
         print(f"(Zone layer unavailable, skipping: {e})")
         zones_geojson = None
 
+    # --- Manatee protection zones in the harbor area ---
+    try:
+        manatee_geojson = fetch_manatee(HARBOR_BBOX)
+        print(f"Loaded {len((manatee_geojson or {}).get('features', []))} manatee protection zone(s).")
+    except Exception as e:
+        print(f"(Manatee layer unavailable, skipping: {e})")
+        manatee_geojson = None
+
     nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
     cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "seagrass", "Lat_DD", "Long_DD"]
 
@@ -478,7 +529,7 @@ def main():
 
     out_map = os.path.join(here, "harbor_map.html")
     write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM,
-              preserves_geojson, seagrass_geojson, zones_geojson, ramps, out_map)
+              preserves_geojson, seagrass_geojson, zones_geojson, manatee_geojson, ramps, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 
 
