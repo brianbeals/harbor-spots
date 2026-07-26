@@ -73,6 +73,14 @@ SEAGRASS_QUERY = (
     "Seagrass_Statewide/MapServer/15/query"
 )
 
+# FWC State Boating Safety Zones = Boating Restricted Areas (FAC 68D-24):
+# idle-speed, slow-speed/minimum-wake, and other regulated-operation polygons.
+# Same envelope-filtered GeoJSON pattern as preserves/seagrass.
+ZONES_QUERY = (
+    "https://gis.myfwc.com/hosting/rest/services/Open_Data/"
+    "State_Boating_Safety_Zones_Florida/MapServer/10/query"
+)
+
 
 # ---------------------------------------------------------------------------
 # Distance helper (geodesic, no extra dependencies)
@@ -176,6 +184,31 @@ def fetch_seagrass(bbox):
     return r.json()
 
 
+def fetch_zones(bbox):
+    """Pull boating restricted/speed-zone polygons intersecting bbox, as GeoJSON.
+
+    Same envelope-filtered REST call as the preserves. Keeps the fields that make
+    a useful popup: area name, the restriction (e.g. Idle Speed, Slow Speed
+    Minimum Wake), the short condition text, and the implementation date.
+    """
+    params = {
+        "where": "1=1",
+        "geometry": bbox,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "AREA_NAME,RESTRICTION,CON_SHORT,DATE_IMP",
+        "returnGeometry": "true",
+        "maxAllowableOffset": "0.0002",   # ~20 m; zones are small, keep detail
+        "geometryPrecision": "5",
+        "f": "geojson",
+    }
+    r = requests.get(ZONES_QUERY, params=params, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
 def _preserve_index(geojson, field="NAME"):
     """Flatten GeoJSON features into [{name, polys}] for fast point tests.
 
@@ -246,11 +279,12 @@ MAP_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass</div>
+<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone</div>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
 var seagrass = __SEAGRASS__;
+var zones = __ZONES__;
 var ramps = __RAMPS__;
 var origin = [__LAT__, __LON__];
 var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
@@ -267,6 +301,16 @@ try {
   L.geoJSON(preserves, {style:{color:'#2874A6', weight:1.5, fill:false},
     onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.NAME)||'Aquatic Preserve');}}).addTo(map);
 } catch(e) { console.error('preserve layer failed:', e); }
+try {
+  L.geoJSON(zones, {style:{color:'#A61E4D', weight:1, fillColor:'#D6336C', fillOpacity:0.28},
+    onEachFeature:function(f,l){
+      var p=f.properties||{};
+      var name=p.AREA_NAME||'Boating Restricted Area';
+      var rest=p.RESTRICTION?'<br>'+p.RESTRICTION:'';
+      var cond=p.CON_SHORT?'<br><i>'+p.CON_SHORT+'</i>':'';
+      l.bindPopup('<b>'+name+'</b>'+rest+cond);
+    }}).addTo(map);
+} catch(e) { console.error('zone layer failed:', e); }
 L.circle(origin, {radius:__RADIUSM__, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
 ramps.forEach(function(r){
   L.circleMarker([r.lat, r.lon], {radius:5, color:'#7E5109', fillColor:'#F39C12', fillOpacity:0.9, weight:1}).addTo(map)
@@ -286,7 +330,7 @@ console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).l
 
 
 def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
-              preserves_geojson, seagrass_geojson, ramps, out_path):
+              preserves_geojson, seagrass_geojson, zones_geojson, ramps, out_path):
     """Write a self-contained Leaflet map: reefs, ramps, preserves, seagrass."""
     ramps = ramps or []
     reefs = []
@@ -317,6 +361,7 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
             .replace("__DATA__", json.dumps(reefs))
             .replace("__PRESERVES__", json.dumps(preserves_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__SEAGRASS__", json.dumps(seagrass_geojson or {"type": "FeatureCollection", "features": []}))
+            .replace("__ZONES__", json.dumps(zones_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__RAMPS__", json.dumps(ramps))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
@@ -407,6 +452,14 @@ def main():
         seagrass_geojson = None
         sdf["seagrass"] = ""
 
+    # --- Boating restricted / speed zones in the harbor area ---
+    try:
+        zones_geojson = fetch_zones(HARBOR_BBOX)
+        print(f"Loaded {len((zones_geojson or {}).get('features', []))} boating restricted/speed zone(s).")
+    except Exception as e:
+        print(f"(Zone layer unavailable, skipping: {e})")
+        zones_geojson = None
+
     nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
     cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "seagrass", "Lat_DD", "Long_DD"]
 
@@ -425,7 +478,7 @@ def main():
 
     out_map = os.path.join(here, "harbor_map.html")
     write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM,
-              preserves_geojson, seagrass_geojson, ramps, out_map)
+              preserves_geojson, seagrass_geojson, zones_geojson, ramps, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 
 
