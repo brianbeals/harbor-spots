@@ -1,0 +1,55 @@
+name: build-harbor-map
+
+# Rebuilds the Charlotte Harbor map from the live public GIS layers and
+# deploys it to GitHub Pages. No secrets: every data source is public and the
+# script runs anonymously.
+on:
+  push:
+    paths:
+      - "harbor_spots.py"
+      - ".github/workflows/build-map.yml"
+  schedule:
+    - cron: "0 11 * * 1"   # Mondays 11:00 UTC (~7am ET)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: harbor-map
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests pandas
+
+      - name: Build the map
+        run: python harbor_spots.py
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp harbor_map.html _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

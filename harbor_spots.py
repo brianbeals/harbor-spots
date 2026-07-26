@@ -1,25 +1,23 @@
 """
-Harbor Spots — Milestones 1 and 2
-Charlotte Harbor artificial-reef finder built on the ArcGIS API for Python.
+Harbor Spots — Charlotte Harbor reef, ramp, and habitat map.
 
-What it does:
-  1. Connects to ArcGIS (Web GIS auth via an API key).
-  2. Queries the public FWC Artificial Reef layer, filtered to Charlotte County,
-     and pulls the result into a Spatially Enabled DataFrame (the pandas-like object).
-  3. Reconciles projections: the layer is stored in Florida GDL Albers (wkid 6439,
-     meters); we ask the server to return WGS84 (wkid 4326) so we get lat/lon.
-  4. Computes geodesic distance from a boat ramp to every reef and lists the closest.
+Pulls public Florida GIS layers via plain REST and renders a self-contained
+Leaflet map:
+  - FWC Artificial Reef Inventory (reefs, filtered to the county)
+  - FWC Boat Ramp Inventory (county ramps; the origin ramp is chosen from it)
+  - FL DEP Aquatic Preserves (polygons; each reef tagged by preserve)
+  - FWC Seagrass Statewide (continuous / patchy beds; reefs tagged on-grass)
+
+It ranks reefs by geodesic distance from a chosen boat ramp, reconciling the
+layers' native Florida GDL Albers projection to WGS84 lat/lon on the server side,
+and writes harbor_map.html.
+
+Pure `requests` + `pandas`, no ArcGIS SDK and no API key — every source is public.
 
 Run:
-  pip install arcgis
-  export ARCGIS_API_KEY="<your key from location.arcgis.com>"
-  python harbor_spots.py
-
-Notes:
-  - The FWC reef layer is public, so the query works with or without a key. The key
-    is what you will need later for basemaps, geocoding, and the Milestone 5 write-back.
-  - Ramp coordinates below are approximate. Milestone 3 replaces them with the
-    Charlotte County boat-ramp feature service.
+  pip install requests pandas
+  python3 harbor_spots.py
+  open harbor_map.html
 
 © Brian Beals, LLC · brianbeals.com
 """
@@ -30,8 +28,6 @@ import json
 
 import requests
 import pandas as pd
-from arcgis.gis import GIS
-from arcgis.features import FeatureLayer
 
 # ---------------------------------------------------------------------------
 # Config
@@ -70,6 +66,13 @@ RAMP_LAYER_URL = (
     "FWC_Florida_Boat_Ramp_Inventory/MapServer/4"
 )
 
+# FWC statewide seagrass beds (Milestone 4). DESCRIPT = "Continuous Seagrass"
+# or "Patchy (Discontinuous) Seagrass".
+SEAGRASS_QUERY = (
+    "https://gis.myfwc.com/hosting/rest/services/Open_Data/"
+    "Seagrass_Statewide/MapServer/15/query"
+)
+
 
 # ---------------------------------------------------------------------------
 # Distance helper (geodesic, no extra dependencies)
@@ -90,6 +93,33 @@ def haversine_nm(lat1, lon1, lat2, lon2):
     dlmb = math.radians(lon2 - lon1)
     a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
     return r_nm * 2 * math.asin(math.sqrt(a))
+
+
+# ---------------------------------------------------------------------------
+# Feature-layer query (plain REST, no arcgis SDK)
+# ---------------------------------------------------------------------------
+
+def query_features(layer_url, where, out_fields):
+    """Return a list of attribute dicts from an ArcGIS feature layer.
+
+    Uses the layer's REST /query endpoint directly. Both the reef and ramp
+    layers carry lat/lon as plain fields, so we skip geometry entirely. This
+    keeps the whole script on `requests` + `pandas` with no SDK dependency,
+    so it runs anywhere (including CI) with no API key.
+    """
+    r = requests.get(
+        f"{layer_url}/query",
+        params={
+            "where": where,
+            "outFields": out_fields,
+            "outSR": "4326",
+            "returnGeometry": "false",
+            "f": "json",
+        },
+        timeout=90,
+    )
+    r.raise_for_status()
+    return [f["attributes"] for f in r.json().get("features", [])]
 
 
 # ---------------------------------------------------------------------------
@@ -122,15 +152,40 @@ def fetch_preserves(bbox):
     return r.json()   # a GeoJSON FeatureCollection
 
 
-def _preserve_index(geojson):
+def fetch_seagrass(bbox):
+    """Pull seagrass beds intersecting bbox, as GeoJSON (WGS84).
+
+    Same pattern as the preserves. Seagrass is far more detailed, so the
+    generalization offset is larger and we keep only the classification field.
+    """
+    params = {
+        "where": "1=1",
+        "geometry": bbox,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "outSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "DESCRIPT",
+        "returnGeometry": "true",
+        "maxAllowableOffset": "0.0006",
+        "geometryPrecision": "5",
+        "f": "geojson",
+    }
+    r = requests.get(SEAGRASS_QUERY, params=params, timeout=90)
+    r.raise_for_status()
+    return r.json()
+
+
+def _preserve_index(geojson, field="NAME"):
     """Flatten GeoJSON features into [{name, polys}] for fast point tests.
 
     Each `polys` entry is one polygon: [outer_ring, hole_ring, ...]. A
-    MultiPolygon contributes several such entries.
+    MultiPolygon contributes several such entries. `field` is the property
+    used as the label (NAME for preserves, DESCRIPT for seagrass).
     """
     idx = []
     for feat in geojson.get("features", []):
-        name = (feat.get("properties") or {}).get("NAME") or ""
+        name = (feat.get("properties") or {}).get(field) or ""
         geom = feat.get("geometry") or {}
         gtype = geom.get("type")
         coords = geom.get("coordinates") or []
@@ -191,17 +246,25 @@ MAP_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#1E8449">&#9632;</span> aquatic preserve</div>
+<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass</div>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
+var seagrass = __SEAGRASS__;
 var ramps = __RAMPS__;
 var origin = [__LAT__, __LON__];
 var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
   {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 try {
-  L.geoJSON(preserves, {style:{color:'#1E8449', weight:1, fillColor:'#1E8449', fillOpacity:0.15},
+  L.geoJSON(seagrass, {style:function(f){
+    var d=(f.properties&&f.properties.DESCRIPT)||'';
+    var col = d.indexOf('Continuous')>=0 ? '#4CA64C' : '#C9E68A';
+    return {color:col, weight:0, fillColor:col, fillOpacity:0.5};
+  }, onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.DESCRIPT)||'Seagrass');}}).addTo(map);
+} catch(e) { console.error('seagrass layer failed:', e); }
+try {
+  L.geoJSON(preserves, {style:{color:'#2874A6', weight:1.5, fill:false},
     onEachFeature:function(f,l){l.bindPopup((f.properties&&f.properties.NAME)||'Aquatic Preserve');}}).addTo(map);
 } catch(e) { console.error('preserve layer failed:', e); }
 L.circle(origin, {radius:__RADIUSM__, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
@@ -214,7 +277,7 @@ L.circleMarker(origin, {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpac
 reefs.forEach(function(f){
   L.circleMarker([f.lat, f.lon],
     {radius:6, color:'#0B3D6B', fillColor:'#2E86C1', fillOpacity:0.95, weight:1}).addTo(map)
-   .bindPopup('<b>'+f.name+'</b><br>'+f.dist+' nm &middot; '+(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material+(f.preserve?'<br><i>'+f.preserve+'</i>':''));
+   .bindPopup('<b>'+f.name+'</b><br>'+f.dist+' nm &middot; '+(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material+(f.preserve?'<br><i>'+f.preserve+'</i>':'')+(f.seagrass?'<br>on '+f.seagrass:''));
 });
 console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).length)+' preserves');
 </script>
@@ -222,8 +285,9 @@ console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).l
 </html>"""
 
 
-def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojson, ramps, out_path):
-    """Write a self-contained Leaflet map of the reefs, ramps, and preserves."""
+def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
+              preserves_geojson, seagrass_geojson, ramps, out_path):
+    """Write a self-contained Leaflet map: reefs, ramps, preserves, seagrass."""
     ramps = ramps or []
     reefs = []
     for _, r in df.iterrows():
@@ -236,6 +300,7 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojso
             "material": str(r.get("MatCat") or ""),
             "dist": round(float(r["dist_nm"]), 1),
             "preserve": str(r.get("preserve") or ""),
+            "seagrass": str(r.get("seagrass") or ""),
         })
     # Explicit view bounds: reef points, all ramps, plus the range ring, so the
     # map always frames the area deterministically (no reliance on auto-fit).
@@ -251,6 +316,7 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojso
     html = (MAP_TEMPLATE
             .replace("__DATA__", json.dumps(reefs))
             .replace("__PRESERVES__", json.dumps(preserves_geojson or {"type": "FeatureCollection", "features": []}))
+            .replace("__SEAGRASS__", json.dumps(seagrass_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__RAMPS__", json.dumps(ramps))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
@@ -269,43 +335,24 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, preserves_geojso
 # ---------------------------------------------------------------------------
 
 def main():
-    # --- Milestone 1: auth + read a public service ---
-    api_key = os.environ.get("ARCGIS_API_KEY")
-    if api_key:
-        gis = GIS(api_key=api_key)
-        print("Connected to ArcGIS with an API key.")
-    else:
-        gis = GIS()  # anonymous still works for this public layer
-        print("No ARCGIS_API_KEY found; connecting anonymously (fine for reading).")
-
-    layer = FeatureLayer(REEF_LAYER_URL)
-
-    # Ask for WGS84 (4326) so we get plain lat/lon back, not Albers meters.
-    result = layer.query(
+    # --- Milestone 1: read the public FWC reef layer (WGS84 lat/lon) ---
+    rows = query_features(
+        REEF_LAYER_URL,
         where=f"County = '{COUNTY}'",
         out_fields="OBJECTID,Name,County,Depth,Relief,MatCat,Long_DD,Lat_DD",
-        out_sr=4326,
-        return_geometry=True,
     )
-    # Build a plain DataFrame from the query attributes. (We avoid result.sdf /
-    # the Spatially Enabled DataFrame because its GeoAccessor fails to import on
-    # some Python 3.14 / pandas 3.0 builds. We asked for Long_DD/Lat_DD in the
-    # out_fields, so we already have lat/lon without needing the geometry object.)
-    sdf = pd.DataFrame([f.attributes for f in result.features])
-    print(f"\nPulled {len(sdf)} reef deployments in {COUNTY} County.")
+    sdf = pd.DataFrame(rows)
+    print(f"Pulled {len(sdf)} reef deployments in {COUNTY} County.")
     if sdf.empty:
         return
 
     # --- Milestone 3: pull county boat ramps from the FWC service ---
     ramps = []
     try:
-        ramp_layer = FeatureLayer(RAMP_LAYER_URL)
-        rres = ramp_layer.query(
-            where=f"County = '{COUNTY}'",
-            out_fields="RampName,City,WaterBodyName,TotalLanes,Latitude,Longitude",
-            out_sr=4326, return_geometry=False)
-        for f in rres.features:
-            a = f.attributes
+        for a in query_features(
+                RAMP_LAYER_URL,
+                where=f"County = '{COUNTY}'",
+                out_fields="RampName,City,WaterBodyName,TotalLanes,Latitude,Longitude"):
             if a.get("Latitude") and a.get("Longitude"):
                 ramps.append({
                     "name": str(a.get("RampName") or "Ramp"),
@@ -347,15 +394,29 @@ def main():
         preserves_geojson = None
         sdf["preserve"] = ""
 
+    # --- Milestone 4: tag each reef that sits on a seagrass bed ---
+    try:
+        seagrass_geojson = fetch_seagrass(HARBOR_BBOX)
+        sidx = _preserve_index(seagrass_geojson, "DESCRIPT")
+        sdf["seagrass"] = sdf.apply(
+            lambda row: preserve_for_point(row["Long_DD"], row["Lat_DD"], sidx), axis=1)
+        on_grass = int((sdf["seagrass"] != "").sum())
+        print(f"Loaded {len(sidx)} seagrass polygon(s); {on_grass} reef(s) sit on grass.")
+    except Exception as e:
+        print(f"(Seagrass layer unavailable, skipping: {e})")
+        seagrass_geojson = None
+        sdf["seagrass"] = ""
+
     nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
-    cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "Lat_DD", "Long_DD"]
+    cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "seagrass", "Lat_DD", "Long_DD"]
 
     print(f"\nReefs within {RADIUS_NM} nm of {origin_label} "
           f"({origin_lat:.4f}, {origin_lon:.4f}):\n")
     for _, r in nearby[cols].iterrows():
         depth = f"{r['Depth']:.0f}ft" if r["Depth"] else "  ? "
         pres = f"  ·  {r['preserve']}" if r["preserve"] else ""
-        print(f"  {r['dist_nm']:5.1f} nm  {depth:>6}  {str(r['MatCat'] or ''):8}  {r['Name']}{pres}")
+        grass = "  [grass]" if r["seagrass"] else ""
+        print(f"  {r['dist_nm']:5.1f} nm  {depth:>6}  {str(r['MatCat'] or ''):8}  {r['Name']}{pres}{grass}")
 
     here = os.path.dirname(os.path.abspath(__file__))
     out_csv = os.path.join(here, "harbor_reefs_nearby.csv")
@@ -363,7 +424,8 @@ def main():
     print(f"\nWrote {len(nearby)} rows to {out_csv}")
 
     out_map = os.path.join(here, "harbor_map.html")
-    write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM, preserves_geojson, ramps, out_map)
+    write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM,
+              preserves_geojson, seagrass_geojson, ramps, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 
 
