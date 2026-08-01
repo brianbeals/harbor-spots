@@ -303,8 +303,16 @@ MAP_TEMPLATE = """<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
-<title>Harbor Spots</title>
+<title>Harbor Spots &middot; Charlotte Harbor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Harbor Spots &middot; Charlotte Harbor">
+<meta property="og:description" content="Artificial reefs, boat ramps, aquatic preserves, seagrass, and manatee and speed zones within 20 nm of Charlotte Harbor. Rebuilt weekly from live FWC and FL DEP layers.">
+<meta property="og:url" content="https://brianbeals.github.io/harbor-spots/">
+<meta property="og:image" content="https://brianbeals.github.io/harbor-spots/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>html,body,#map{height:100%;margin:0} .lgnd{position:absolute;z-index:1000;bottom:12px;left:12px;background:#fff;padding:8px 10px;font:12px system-ui;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3)}</style>

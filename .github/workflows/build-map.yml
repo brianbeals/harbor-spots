@@ -7,6 +7,7 @@ on:
   push:
     paths:
       - "harbor_spots.py"
+      - "og-card.png"
       - ".github/workflows/build-map.yml"
   schedule:
     - cron: "0 11 * * 1"   # Mondays 11:00 UTC (~7am ET)
@@ -44,6 +45,7 @@ jobs:
         run: |
           mkdir -p _site
           cp harbor_map.html _site/index.html
+          cp og-card.png _site/og-card.png
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
