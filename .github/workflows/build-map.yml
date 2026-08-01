@@ -8,6 +8,7 @@ on:
     paths:
       - "harbor_spots.py"
       - "og-card.png"
+      - "CNAME"
       - ".github/workflows/build-map.yml"
   schedule:
     - cron: "0 11 * * 1"   # Mondays 11:00 UTC (~7am ET)
@@ -46,6 +47,7 @@ jobs:
           mkdir -p _site
           cp harbor_map.html _site/index.html
           cp og-card.png _site/og-card.png
+          cp CNAME _site/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

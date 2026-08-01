@@ -309,16 +309,19 @@ MAP_TEMPLATE = """<!doctype html>
 <meta property="og:type" content="website">
 <meta property="og:title" content="Harbor Spots &middot; Charlotte Harbor">
 <meta property="og:description" content="Artificial reefs, boat ramps, aquatic preserves, seagrass, and manatee and speed zones within 20 nm of Charlotte Harbor. Rebuilt weekly from live FWC and FL DEP layers.">
-<meta property="og:url" content="https://brianbeals.github.io/harbor-spots/">
-<meta property="og:image" content="https://brianbeals.github.io/harbor-spots/og-card.png">
+<meta property="og:url" content="https://harbor.brianbeals.com/">
+<meta property="og:image" content="https://harbor.brianbeals.com/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://harbor.brianbeals.com/">
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "885b335369c14150a26e2457e10607ff"}'></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>html,body,#map{height:100%;margin:0} .lgnd{position:absolute;z-index:1000;bottom:12px;left:12px;background:#fff;padding:8px 10px;font:12px system-ui;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);max-width:340px}
 .cred{margin-top:8px;padding-top:7px;border-top:1px solid #e5e8ec;font-size:11px;line-height:1.45;color:#6B7280}
-.cred .brand{display:flex;align-items:center;gap:5px;margin-top:3px;color:#1E3A5F;font-weight:600}
+.cred .brand{display:flex;align-items:flex-start;gap:5px;margin-top:3px;color:#1E3A5F;font-weight:600}
+.cred .brand svg{flex:0 0 auto;margin-top:1px}
 .cred a{color:#2E86C1;font-weight:600;text-decoration:none}
 .cred a:hover{text-decoration:underline}</style>
 </head>
@@ -326,7 +329,7 @@ MAP_TEMPLATE = """<!doctype html>
 <div id="map"></div>
 <div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone
 <div class="cred">Live FWC, FL DEP, and NOAA feature services &middot; spatial joins &middot; rebuilt weekly
-<div class="brand"><svg viewBox="0 0 32 32" width="14" height="14" aria-label="Brian Beals"><rect width="32" height="32" rx="6" fill="#1E3A5F"/><text x="16" y="15" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="16" font-weight="800" letter-spacing="-0.04em">BB</text></svg>Brian Beals, LLC &middot; service-disabled veteran-owned small business &middot; <a href="https://brianbeals.com">brianbeals.com</a></div></div></div>
+<div class="brand"><svg viewBox="0 0 32 32" width="14" height="14" aria-label="Brian Beals"><rect width="32" height="32" rx="6" fill="#1E3A5F"/><text x="16" y="15" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="16" font-weight="800" letter-spacing="-0.04em">BB</text></svg><span>Brian Beals, LLC &middot; service-disabled veteran-owned small business &middot; <a href="https://brianbeals.com">brianbeals.com</a></span></div></div></div>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
