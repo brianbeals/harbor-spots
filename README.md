@@ -1,6 +1,6 @@
 # Harbor Spots
 
-**Live map: https://brianbeals.github.io/harbor-spots/**
+**Live map: https://harbor.brianbeals.com/**
 
 A self-updating map of Charlotte Harbor, Florida that pulls live public GIS
 services and renders artificial reefs, boat ramps, aquatic-preserve boundaries,
