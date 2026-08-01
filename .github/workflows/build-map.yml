@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install requests pandas
+        run: pip install requests pandas pyyaml
 
       - name: Build the map
         run: python harbor_spots.py

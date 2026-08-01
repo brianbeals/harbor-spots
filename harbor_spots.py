@@ -15,7 +15,7 @@ and writes harbor_map.html.
 Pure `requests` + `pandas`, no ArcGIS SDK and no API key — every source is public.
 
 Run:
-  pip install requests pandas
+  pip install requests pandas pyyaml
   python3 harbor_spots.py
   open harbor_map.html
 
@@ -28,6 +28,9 @@ import json
 
 import requests
 import pandas as pd
+import yaml
+
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -47,9 +50,21 @@ RAMPS = {
     "Port Charlotte Beach": (26.9830, -82.0780),
 }
 
-ORIGIN_RAMP = "Ponce de Leon" # matched against the live ramp name OR city
-RADIUS_NM   = 20              # nautical miles to include
-COUNTY      = "Charlotte"     # try 'Lee' or 'Sarasota' too
+RADIUS_NM   = 20              # nautical miles to include, applied in the browser
+
+# Magnetic variation for Charlotte Harbor, degrees WEST. Bearings are shown as
+# magnetic because that is what a compass and a US chartplotter default to.
+# magnetic = true + variation. Drifts roughly 0.1 deg a year; recheck occasionally
+# at ngdc.noaa.gov/geomag/calculators/magcalc.shtml.
+MAG_VAR_W   = 6.6
+
+# Departure points that are not public boat ramps: marinas and a creek mouth.
+# See origins.yml, which also records why Brian's own dock is deliberately absent.
+ORIGINS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "origins.yml")
+COUNTIES    = ["Charlotte", "Lee"]   # Lee added for Pine Island Sound: Cabbage Key,
+                                     # Burnt Store and the southern reefs sit below
+                                     # the county line. Add 'Sarasota' to reach north.
+COUNTY_WHERE = "County IN (" + ", ".join(f"'{c}'" for c in COUNTIES) + ")"
 
 # FL DEP aquatic-preserve polygons (Milestone 3). Envelope filter keeps the
 # payload to just the Charlotte Harbor / SW Florida preserves.
@@ -93,6 +108,36 @@ MANATEE_QUERY = (
 # ---------------------------------------------------------------------------
 # Distance helper (geodesic, no extra dependencies)
 # ---------------------------------------------------------------------------
+
+def load_origins():
+    """Curated departure points (marinas, creek mouth) merged with the FWC ramps.
+
+    Kept in YAML rather than fetched from a GIS layer: "a marina people actually
+    leave from" is an editorial call no dataset encodes, the entries never move,
+    and the build already depends on five external services. The file's comments
+    carry the reason Brian's private dock is excluded, which is why this is YAML
+    and not JSON.
+    """
+    if not os.path.exists(ORIGINS_FILE):
+        print(f"(No {os.path.basename(ORIGINS_FILE)}; ramps only.)")
+        return []
+    with open(ORIGINS_FILE) as fh:
+        data = yaml.safe_load(fh) or {}
+    out = []
+    for e in data.get("origins", []):
+        if e.get("lat") is None or e.get("lon") is None:
+            continue
+        out.append({
+            "name": str(e.get("name") or "Origin"),
+            "lat": float(e["lat"]),
+            "lon": float(e["lon"]),
+            "kind": str(e.get("kind") or "marina"),
+            "water": str(e.get("water") or ""),
+            "def": bool(e.get("default")),
+        })
+    print(f"Loaded {len(out)} curated origins from origins.yml.")
+    return out
+
 
 def haversine_nm(lat1, lon1, lat2, lon2):
     """Great-circle distance in nautical miles between two lat/lon points.
@@ -323,11 +368,20 @@ MAP_TEMPLATE = """<!doctype html>
 .cred .brand{display:flex;align-items:flex-start;gap:5px;margin-top:3px;color:#1E3A5F;font-weight:600}
 .cred .brand svg{flex:0 0 auto;margin-top:1px}
 .cred a{color:#2E86C1;font-weight:600;text-decoration:none}
-.cred a:hover{text-decoration:underline}</style>
+.cred a:hover{text-decoration:underline}
+.ctl{position:absolute;z-index:1000;top:12px;right:12px;background:#fff;padding:9px 11px;font:12px system-ui;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);max-width:260px}
+.ctl label{display:block;font-weight:600;color:#1E3A5F;margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.ctl select{width:100%;font:13px system-ui;padding:4px 6px;border:1px solid #cfd8e3;border-radius:4px;background:#fff;color:#1A1A2A}
+.ctl .meta{margin-top:6px;font-size:11px;line-height:1.45;color:#6B7280}</style>
 </head>
 <body>
 <div id="map"></div>
-<div class="lgnd"><b>__RAMP__</b><br>reefs within __RADNM__ nm<br><span style="color:#E74C3C">&#9679;</span> origin ramp &nbsp; <span style="color:#F39C12">&#9679;</span> boat ramp<br><span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone
+<div class="ctl">
+  <label for="origin">Departing from</label>
+  <select id="origin"></select>
+  <div class="meta" id="ometa"></div>
+</div>
+<div class="lgnd"><b id="lgnd-origin">__RAMP__</b><br><span id="lgnd-count">reefs within __RADNM__ nm</span><br><span style="color:#E74C3C">&#9679;</span> selected origin &nbsp; <span style="color:#1D9E75">&#9679;</span> marina / creek<br><span style="color:#F39C12">&#9679;</span> boat ramp &nbsp; <span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone
 <div class="cred">Live FWC, FL DEP, and NOAA feature services &middot; spatial joins &middot; rebuilt weekly
 <div class="brand"><svg viewBox="0 0 32 32" width="14" height="14" aria-label="Brian Beals"><rect width="32" height="32" rx="6" fill="#1E3A5F"/><text x="16" y="15" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="16" font-weight="800" letter-spacing="-0.04em">BB</text></svg><span>Brian Beals, LLC &middot; service-disabled veteran-owned small business &middot; <a href="https://brianbeals.com">brianbeals.com</a></span></div></div></div>
 <script>
@@ -337,6 +391,7 @@ var seagrass = __SEAGRASS__;
 var zones = __ZONES__;
 var manatee = __MANATEE__;
 var ramps = __RAMPS__;
+var curated = __ORIGINS__;
 var origin = [__LAT__, __LON__];
 var map = L.map('map').fitBounds([[__S__, __W__], [__N__, __E__]]);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -371,25 +426,108 @@ try {
       l.bindPopup('<b>'+name+'</b>'+rest+cond);
     }}).addTo(map);
 } catch(e) { console.error('zone layer failed:', e); }
-L.circle(origin, {radius:__RADIUSM__, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
+// ---- geometry, client side -------------------------------------------------
+// Reefs arrive unfiltered for the whole county set. The radius cut, distance and
+// bearing are all computed here against whichever origin is selected, so moving
+// the origin south does not leave the new circle half empty.
+var RADIUS_NM = __RADNM__;
+var MAG_VAR_W = __MAGVAR__;   // degrees west; magnetic = true + variation
+
+function nmBetween(lat1, lon1, lat2, lon2) {
+  var R = 3440.065, rad = Math.PI / 180;
+  var p1 = lat1 * rad, p2 = lat2 * rad;
+  var dp = (lat2 - lat1) * rad, dl = (lon2 - lon1) * rad;
+  var a = Math.sin(dp/2)*Math.sin(dp/2) + Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+function bearingMag(lat1, lon1, lat2, lon2) {
+  var rad = Math.PI / 180;
+  var p1 = lat1 * rad, p2 = lat2 * rad, dl = (lon2 - lon1) * rad;
+  var y = Math.sin(dl) * Math.cos(p2);
+  var x = Math.cos(p1)*Math.sin(p2) - Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  var t = (Math.atan2(y, x) / rad + 360) % 360;
+  return (t + MAG_VAR_W) % 360;          // true -> magnetic
+}
+
+// Curated departure points first, then every FWC ramp, sorted by distance from
+// the default origin so the nearest launches are at the top of the list.
+var origins = curated.slice();
+var seed = origins.filter(function(o){ return o.def; })[0] || origins[0] || {lat:__LAT__, lon:__LON__};
+ramps.map(function(r){
+  return {name:r.name, lat:r.lat, lon:r.lon, kind:'ramp', water:r.water||'', def:false,
+          d:nmBetween(seed.lat, seed.lon, r.lat, r.lon)};
+}).sort(function(a,b){ return a.d - b.d; }).forEach(function(r){ origins.push(r); });
+
+var reefLayer = L.layerGroup().addTo(map);
+var ring = null, originDot = null;
+
+function selectOrigin(i) {
+  var o = origins[i];
+  if (ring) map.removeLayer(ring);
+  if (originDot) map.removeLayer(originDot);
+  reefLayer.clearLayers();
+
+  ring = L.circle([o.lat, o.lon], {radius: RADIUS_NM * 1852.0, color:'#1E3A5F', weight:1, fill:false}).addTo(map);
+  originDot = L.circleMarker([o.lat, o.lon], {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpacity:1, weight:2})
+    .addTo(map).bindPopup('<b>'+o.name+'</b><br>departure point');
+
+  var shown = 0;
+  reefs.forEach(function(f){
+    var d = nmBetween(o.lat, o.lon, f.lat, f.lon);
+    if (d > RADIUS_NM) return;
+    shown++;
+    var brg = Math.round(bearingMag(o.lat, o.lon, f.lat, f.lon));
+    var hdg = ('00' + brg).slice(-3);
+    L.circleMarker([f.lat, f.lon],
+      {radius:6, color:'#0B3D6B', fillColor:'#2E86C1', fillOpacity:0.95, weight:1})
+     .bindPopup('<b>'+f.name+'</b><br><b>'+d.toFixed(1)+' nm &middot; '+hdg+'&deg;M</b><br>'
+       +(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material
+       +(f.preserve?'<br><i>'+f.preserve+'</i>':'')
+       +(f.seagrass?'<br>on '+f.seagrass:''))
+     .addTo(reefLayer);
+  });
+
+  map.fitBounds(ring.getBounds().pad(0.05));
+  document.getElementById('lgnd-origin').textContent = o.name;
+  document.getElementById('lgnd-count').textContent = shown + ' of ' + reefs.length + ' reefs within ' + RADIUS_NM + ' nm';
+  document.getElementById('ometa').textContent =
+    shown + ' reefs in range' + (o.water ? ' · ' + o.water : '') + ' · bearings magnetic';
+}
+
+// Ramp markers are static; the selected origin is drawn over them.
 ramps.forEach(function(r){
   L.circleMarker([r.lat, r.lon], {radius:5, color:'#7E5109', fillColor:'#F39C12', fillOpacity:0.9, weight:1}).addTo(map)
    .bindPopup('<b>'+r.name+'</b>'+(r.water?'<br>'+r.water:'')+(r.lanes?'<br>'+r.lanes+' lanes':''));
 });
-L.circleMarker(origin, {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpacity:1, weight:2})
-  .addTo(map).bindPopup('Ramp: __RAMP__');
-reefs.forEach(function(f){
-  L.circleMarker([f.lat, f.lon],
-    {radius:6, color:'#0B3D6B', fillColor:'#2E86C1', fillOpacity:0.95, weight:1}).addTo(map)
-   .bindPopup('<b>'+f.name+'</b><br>'+f.dist+' nm &middot; '+(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material+(f.preserve?'<br><i>'+f.preserve+'</i>':'')+(f.seagrass?'<br>on '+f.seagrass:''));
+curated.forEach(function(o){
+  L.circleMarker([o.lat, o.lon], {radius:6, color:'#0E5C4A', fillColor:'#1D9E75', fillOpacity:0.95, weight:1}).addTo(map)
+   .bindPopup('<b>'+o.name+'</b><br>'+o.kind+(o.water?'<br>'+o.water:''));
 });
-console.log('harbor-spots: '+reefs.length+' reefs, '+((preserves.features||[]).length)+' preserves');
+
+var sel = document.getElementById('origin');
+var gCur = document.createElement('optgroup'); gCur.label = 'Marinas & creeks';
+var gRamp = document.createElement('optgroup'); gRamp.label = 'Public boat ramps';
+origins.forEach(function(o, i){
+  var opt = document.createElement('option');
+  opt.value = i;
+  opt.textContent = o.name + (o.kind === 'ramp' && o.d ? '  (' + o.d.toFixed(1) + ' nm)' : '');
+  (o.kind === 'ramp' ? gRamp : gCur).appendChild(opt);
+});
+sel.appendChild(gCur); sel.appendChild(gRamp);
+sel.addEventListener('change', function(){ selectOrigin(+this.value); });
+
+var startIdx = 0;
+origins.forEach(function(o, i){ if (o.def) startIdx = i; });
+sel.value = startIdx;
+selectOrigin(startIdx);
+
+console.log('harbor-spots: '+reefs.length+' reefs, '+origins.length+' origins, '+((preserves.features||[]).length)+' preserves');
 </script>
 </body>
 </html>"""
 
 
-def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
+def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm, curated_origins,
               preserves_geojson, seagrass_geojson, zones_geojson, manatee_geojson, ramps, out_path):
     """Write a self-contained Leaflet map: reefs, ramps, preserves, seagrass."""
     ramps = ramps or []
@@ -402,14 +540,16 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
             "lon": float(r["Long_DD"]),
             "depth": None if (depth is None or pd.isna(depth)) else round(float(depth)),
             "material": str(r.get("MatCat") or ""),
-            "dist": round(float(r["dist_nm"]), 1),
             "preserve": str(r.get("preserve") or ""),
             "seagrass": str(r.get("seagrass") or ""),
         })
     # Explicit view bounds: reef points, all ramps, plus the range ring, so the
     # map always frames the area deterministically (no reliance on auto-fit).
-    lats = [origin_lat] + [r["lat"] for r in reefs] + [r["lat"] for r in ramps]
-    lons = [origin_lon] + [r["lon"] for r in reefs] + [r["lon"] for r in ramps]
+    # Frame the default origin's range ring. Reefs now span two counties, so
+    # fitting to all of them would zoom out past anything useful; the browser
+    # refits when the origin changes.
+    lats = [origin_lat]
+    lons = [origin_lon]
     dlat = radius_nm / 60.0
     dlon = radius_nm / (60.0 * max(0.1, math.cos(math.radians(origin_lat))))
     south = min(min(lats), origin_lat - dlat)
@@ -424,6 +564,8 @@ def write_map(df, ramp_name, origin_lat, origin_lon, radius_nm,
             .replace("__ZONES__", json.dumps(zones_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__MANATEE__", json.dumps(manatee_geojson or {"type": "FeatureCollection", "features": []}))
             .replace("__RAMPS__", json.dumps(ramps))
+            .replace("__ORIGINS__", json.dumps(curated_origins))
+            .replace("__MAGVAR__", str(MAG_VAR_W))
             .replace("__LAT__", str(origin_lat))
             .replace("__LON__", str(origin_lon))
             .replace("__S__", str(south)).replace("__N__", str(north))
@@ -444,11 +586,11 @@ def main():
     # --- Milestone 1: read the public FWC reef layer (WGS84 lat/lon) ---
     rows = query_features(
         REEF_LAYER_URL,
-        where=f"County = '{COUNTY}'",
+        where=COUNTY_WHERE,
         out_fields="OBJECTID,Name,County,Depth,Relief,MatCat,Long_DD,Lat_DD",
     )
     sdf = pd.DataFrame(rows)
-    print(f"Pulled {len(sdf)} reef deployments in {COUNTY} County.")
+    print(f"Pulled {len(sdf)} reef deployments in {'/'.join(COUNTIES)} County.")
     if sdf.empty:
         return
 
@@ -457,7 +599,7 @@ def main():
     try:
         for a in query_features(
                 RAMP_LAYER_URL,
-                where=f"County = '{COUNTY}'",
+                where=COUNTY_WHERE,
                 out_fields="RampName,City,WaterBodyName,TotalLanes,Latitude,Longitude"):
             if a.get("Latitude") and a.get("Longitude"):
                 ramps.append({
@@ -468,7 +610,7 @@ def main():
                     "lanes": a.get("TotalLanes"),
                     "city": str(a.get("City") or ""),
                 })
-        print(f"Loaded {len(ramps)} boat ramps in {COUNTY} County.")
+        print(f"Loaded {len(ramps)} boat ramps in {'/'.join(COUNTIES)} County.")
     except Exception as e:
         print(f"(Ramp layer unavailable: {e})")
 
@@ -529,7 +671,11 @@ def main():
         print(f"(Manatee layer unavailable, skipping: {e})")
         manatee_geojson = None
 
-    nearby = sdf[sdf["dist_nm"] <= RADIUS_NM].sort_values("dist_nm")
+    # NOT filtered by radius: the browser applies RADIUS_NM to whichever origin
+    # is selected. Cutting here would hide reefs that are in range of a southern
+    # origin but out of range of this one.
+    all_reefs = sdf.sort_values("dist_nm")
+    nearby = all_reefs[all_reefs["dist_nm"] <= RADIUS_NM]
     cols = ["Name", "dist_nm", "Depth", "Relief", "MatCat", "preserve", "seagrass", "Lat_DD", "Long_DD"]
 
     print(f"\nReefs within {RADIUS_NM} nm of {origin_label} "
@@ -546,7 +692,9 @@ def main():
     print(f"\nWrote {len(nearby)} rows to {out_csv}")
 
     out_map = os.path.join(here, "harbor_map.html")
-    write_map(nearby, origin_label, origin_lat, origin_lon, RADIUS_NM,
+    curated_origins = load_origins()
+    write_map(all_reefs, origin_label, origin_lat, origin_lon, RADIUS_NM,
+              curated_origins,
               preserves_geojson, seagrass_geojson, zones_geojson, manatee_geojson, ramps, out_map)
     print(f"Wrote map to {out_map} — open it in a browser.")
 

@@ -1,0 +1,103 @@
+# Departure points for Harbor Spots.
+#
+# The map's public boat ramps come from the FWC Florida Boat Ramp Inventory,
+# filtered to Charlotte County. That layer holds public launch ramps only, so the
+# marinas people actually leave from are absent. This file adds them.
+#
+# Kept as a static list on purpose. "A marina people depart from" is an editorial
+# call no GIS layer encodes, the entries never move, and the weekly build already
+# leans on five external FWC and DEP services. One more service is one more thing
+# that can rename a field and break Monday's build. This file cannot.
+#
+# The build merges these with the FWC ramps into one origin list. Each entry gets
+# kind: marina or kind: destination so the selector can group them and the map can
+# style the markers differently.
+#
+# ── COORDINATES ARE UNVERIFIED ────────────────────────────────────────────────
+# Every lat/lon below is my best value, not a surveyed one, and the origin drives
+# every distance and bearing on the page. Once the markers render, eyeball each
+# pin against the satellite layer and correct it. Flip `verified: true` as you
+# confirm each one. A pin 200 yards off the dock is a bearing that reads wrong on
+# a short run.
+
+# ── PRIVATE DOCK: DELIBERATELY ABSENT ─────────────────────────────────────────
+# Brian departs from his own dock. That point is NOT in this file and must not be
+# added. This map is public and is cited by name in the state/local capability
+# statement, so every origin in the selector gets published. A pin on the dock
+# publishes a home address.
+#
+# The Alligator Creek entry below is the stand-in and is also the more useful
+# number: the run out is no-wake, so a plan measured from the dock counts miles
+# nobody navigates by. Distance from where you reach open water is the figure you
+# would actually use. Alligator Creek is a public waterway shared by many boaters,
+# so naming it points at nobody.
+
+origins:
+  - name: "Alligator Creek (mouth)"
+    kind: creek
+    lat: 26.880344
+    lon: -82.060635
+    water: "Charlotte Harbor"
+    county: Charlotte
+    default: true
+    note: >
+      Where Brian reaches open water, and the default origin. Public waterway,
+      so naming it carries no address signal. Coordinate supplied by Brian from
+      the map, 2026-08-01. Landed 0.1 nm from the westernmost node of the OSM
+      Alligator Creek waterway, which is a good independent cross-check.
+    verified: true
+
+  - name: "Burnt Store Marina"
+    kind: marina
+    lat: 26.7628
+    lon: -82.0578
+    water: "Charlotte Harbor"
+    county: Lee          # CHECK: sits near the Charlotte/Lee line
+    note: "The marine forecast defaults to --home 'Burnt Store', so this is the reference point for conditions."
+    verified: false
+
+  - name: "Fishermen's Village Marina"
+    kind: marina
+    lat: 26.9297
+    lon: -82.0637
+    water: "Charlotte Harbor"
+    county: Charlotte
+    verified: false
+
+  - name: "Laishley Park Municipal Marina"
+    kind: marina
+    lat: 26.9333
+    lon: -82.0500
+    water: "Peace River"
+    county: Charlotte
+    note: "Spelled Laishley, not Lashley."
+    verified: false
+
+  - name: "Gasparilla Marina"
+    kind: marina
+    lat: 26.8347
+    lon: -82.2650
+    water: "Placida Harbor"
+    county: Charlotte
+    verified: false
+
+  - name: "Palm Island Marina"
+    kind: marina
+    lat: 26.8628
+    lon: -82.2836
+    water: "Lemon Bay"
+    county: Charlotte
+    verified: false
+
+  - name: "Cabbage Key"
+    kind: destination
+    lat: 26.6578
+    lon: -82.2242
+    water: "Pine Island Sound"
+    county: Lee
+    note: >
+      Boat-access only, with a dock and cottages. More often where you are going
+      than where you start, but it works as an origin if you are staying over, and
+      picking it answers the useful question of what is reachable from the island.
+      Tagged destination rather than marina so the selector can group it apart.
+    verified: false
