@@ -614,16 +614,25 @@ def main():
     except Exception as e:
         print(f"(Ramp layer unavailable: {e})")
 
-    # --- Milestone 2: distance from the origin ramp to every reef ---
-    _q = ORIGIN_RAMP.lower()
-    origin = next((r for r in ramps
-                   if _q in r["name"].lower() or _q in r.get("city", "").lower()), None)
-    if origin:
-        origin_lat, origin_lon, origin_label = origin["lat"], origin["lon"], origin["name"]
+    # --- Default origin ---
+    # The browser lets you pick any origin; this one only sets the initial view,
+    # the build log, and the CSV. It comes from the `default: true` entry in
+    # origins.yml, falling back to a ramp if that file is missing or has none.
+    curated_origins = load_origins()
+    default_origin = next((o for o in curated_origins if o.get("def")), None)
+    if default_origin:
+        origin_lat = default_origin["lat"]
+        origin_lon = default_origin["lon"]
+        origin_label = default_origin["name"]
+    elif ramps:
+        origin_lat, origin_lon = ramps[0]["lat"], ramps[0]["lon"]
+        origin_label = ramps[0]["name"]
+        print("(No default in origins.yml; using the first ramp.)")
     else:
-        origin_lat, origin_lon = RAMPS.get(ORIGIN_RAMP, (26.9583, -82.2078))
-        origin_label = ORIGIN_RAMP
-    print(f"Origin ramp: {origin_label} ({origin_lat:.4f}, {origin_lon:.4f})")
+        origin_lat, origin_lon = RAMPS["Ponce de Leon Park"]
+        origin_label = "Ponce de Leon Park"
+        print("(No origins and no ramps; falling back to a hard-coded point.)")
+    print(f"Default origin: {origin_label} ({origin_lat:.4f}, {origin_lon:.4f})")
 
     sdf["dist_nm"] = sdf.apply(
         lambda row: haversine_nm(origin_lat, origin_lon, row["Lat_DD"], row["Long_DD"]),
@@ -692,7 +701,6 @@ def main():
     print(f"\nWrote {len(nearby)} rows to {out_csv}")
 
     out_map = os.path.join(here, "harbor_map.html")
-    curated_origins = load_origins()
     write_map(all_reefs, origin_label, origin_lat, origin_lon, RADIUS_NM,
               curated_origins,
               preserves_geojson, seagrass_geojson, zones_geojson, manatee_geojson, ramps, out_map)
