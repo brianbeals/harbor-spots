@@ -66,6 +66,29 @@ COUNTIES    = ["Charlotte", "Lee"]   # Lee added for Pine Island Sound: Cabbage 
                                      # the county line. Add 'Sarasota' to reach north.
 COUNTY_WHERE = "County IN (" + ", ".join(f"'{c}'" for c in COUNTIES) + ")"
 
+# Ramps get a tighter net than reefs. Adding Lee County brought the reefs we
+# wanted and 117 ramps we did not: Caloosahatchee, Cape Coral canals, Estero Bay,
+# Imperial River. Different boating areas entirely, and unusable in a dropdown.
+#
+# Two filters were tried and rejected before this one:
+#   - Distance from the origin. Fails: Fort Myers and Cape Coral are only 16-20 nm
+#     from Alligator Creek as the crow flies, but they are up a river.
+#   - "Has reefs within range." Fails: Gulf reefs run the whole coast, so 110 of
+#     117 ramps qualify. No discrimination at all.
+#   - A WaterBodyName allowlist. Rejected: 25+ values with one-offs like
+#     "Lemon Bay - Ainger Creek - Rocky Creek". Needs hand-maintenance forever.
+#
+# Geography is what actually separates them. The Charlotte Harbor / Pine Island
+# Sound system lies north and west of the Caloosahatchee mouth. This box keeps 51
+# ramps and drops 66. The southern edge is deliberately 26.45, not 26.52: at 26.52
+# it clipped Monroe Canal Marina at St. James City, which is the south tip of Pine
+# Island and genuinely Pine Island Sound water. The eastern edge stays at -82.00;
+# relaxing it to -81.98 lets six Cape Coral canal ramps back in.
+#
+# Reefs are NOT filtered this way. They stay county-wide so a southern origin's
+# range ring is not half empty.
+RAMP_BOX = {"min_lat": 26.45, "max_lon": -82.00}
+
 # FL DEP aquatic-preserve polygons (Milestone 3). Envelope filter keeps the
 # payload to just the Charlotte Harbor / SW Florida preserves.
 PRESERVE_QUERY = (
@@ -646,12 +669,18 @@ def main():
 
     # --- Milestone 3: pull county boat ramps from the FWC service ---
     ramps = []
+    skipped = 0
     try:
         for a in query_features(
                 RAMP_LAYER_URL,
                 where=COUNTY_WHERE,
                 out_fields="RampName,City,WaterBodyName,TotalLanes,Latitude,Longitude"):
             if a.get("Latitude") and a.get("Longitude"):
+                # Keep only the Charlotte Harbor / Pine Island Sound system.
+                if (float(a["Latitude"]) < RAMP_BOX["min_lat"]
+                        or float(a["Longitude"]) > RAMP_BOX["max_lon"]):
+                    skipped += 1
+                    continue
                 ramps.append({
                     "name": str(a.get("RampName") or "Ramp"),
                     "lat": float(a["Latitude"]),
@@ -660,7 +689,9 @@ def main():
                     "lanes": a.get("TotalLanes"),
                     "city": str(a.get("City") or ""),
                 })
-        print(f"Loaded {len(ramps)} boat ramps in {'/'.join(COUNTIES)} County.")
+        print(f"Loaded {len(ramps)} boat ramps in the harbor system "
+              f"({skipped} outside it skipped, of {len(ramps) + skipped} in "
+              f"{'/'.join(COUNTIES)} County).")
     except Exception as e:
         print(f"(Ramp layer unavailable: {e})")
 

@@ -38,6 +38,10 @@ RAMPS = [
      "TotalLanes": 2, "Latitude": 26.9180, "Longitude": -82.0700},
     {"RampName": "Placida", "City": "Placida", "WaterBodyName": "Gasparilla Sound",
      "TotalLanes": 3, "Latitude": 26.8430, "Longitude": -82.2630},
+    # Outside RAMP_BOX: up the Caloosahatchee, a different boating area. Must be
+    # dropped, or the dropdown fills with Fort Myers and Cape Coral again.
+    {"RampName": "Fort Myers Yacht Basin", "City": "Fort Myers", "WaterBodyName": "Caloosahatchee River",
+     "TotalLanes": 2, "Latitude": 26.6400, "Longitude": -81.8700},
 ]
 EMPTY = {"type": "FeatureCollection", "features": []}
 
@@ -76,6 +80,12 @@ def main():
     check("curated origins injected", len(curated) > 0)
     check("exactly one default origin",
           sum(1 for o in curated if o.get("def")) == 1)
+
+    ramps_js = json.loads(re.search(r"var ramps = (\[.*?\]);", h, re.S).group(1))
+    check("ramps outside the harbor system are dropped",
+          not any("Fort Myers" in r["name"] for r in ramps_js))
+    check("ramps inside the harbor system are kept",
+          any("Ponce" in r["name"] for r in ramps_js))
 
     check("origin selector present", 'id="origin"' in h)
     check("magnetic variation shipped", "MAG_VAR_W = " in h)
