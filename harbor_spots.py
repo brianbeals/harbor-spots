@@ -372,7 +372,17 @@ MAP_TEMPLATE = """<!doctype html>
 .ctl{position:absolute;z-index:1000;top:12px;right:12px;background:#fff;padding:9px 11px;font:12px system-ui;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);max-width:260px}
 .ctl label{display:block;font-weight:600;color:#1E3A5F;margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .ctl select{width:100%;font:13px system-ui;padding:4px 6px;border:1px solid #cfd8e3;border-radius:4px;background:#fff;color:#1A1A2A}
-.ctl .meta{margin-top:6px;font-size:11px;line-height:1.45;color:#6B7280}</style>
+.ctl .meta{margin-top:6px;font-size:11px;line-height:1.45;color:#6B7280}
+.cond{margin-top:8px;padding-top:7px;border-top:1px solid #e5e8ec;font-size:11px;line-height:1.5;color:#1A1A2A;display:none}
+.cond .hdr{display:flex;align-items:center;gap:5px;font-weight:600;margin-bottom:2px}
+.cond .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.cond .good .dot,.cond.good .dot{background:#1E8449}
+.cond.caution .dot{background:#D4AC0D}
+.cond.marginal .dot{background:#C0392B}
+.cond.stale .dot{background:#8A8F98}
+.cond .det{color:#6B7280}
+.cond a{color:#2E86C1;font-weight:600;text-decoration:none}
+.cond a:hover{text-decoration:underline}</style>
 </head>
 <body>
 <div id="map"></div>
@@ -380,6 +390,7 @@ MAP_TEMPLATE = """<!doctype html>
   <label for="origin">Departing from</label>
   <select id="origin"></select>
   <div class="meta" id="ometa"></div>
+  <div class="cond" id="cond"></div>
 </div>
 <div class="lgnd"><b id="lgnd-origin">__RAMP__</b><br><span id="lgnd-count">reefs within __RADNM__ nm</span><br><span style="color:#E74C3C">&#9679;</span> selected origin &nbsp; <span style="color:#1D9E75">&#9679;</span> marina / creek<br><span style="color:#F39C12">&#9679;</span> boat ramp &nbsp; <span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone
 <div class="cred">Live FWC, FL DEP, and NOAA feature services &middot; spatial joins &middot; rebuilt weekly
@@ -520,6 +531,45 @@ var startIdx = 0;
 origins.forEach(function(o, i){ if (o.def) startIdx = i; });
 sel.value = startIdx;
 selectOrigin(startIdx);
+
+// ---- current conditions, fetched at page load -------------------------------
+// NOT baked in at build time. This map rebuilds weekly; the forecast rebuilds
+// about twenty times a day. A conditions line frozen at build time could tell
+// you "light chop" on a 25-knot afternoon, which on a boating page is worse than
+// showing nothing. So it is read live from the forecast site, which publishes
+// conditions.json next to its index.html. GitHub Pages sends
+// Access-Control-Allow-Origin: *, so the cross-origin read needs no proxy.
+//
+// Every failure path is silent-but-honest: if the fetch fails the strip stays
+// hidden, and if the data is old it says so rather than presenting it as now.
+(function () {
+  var STALE_HOURS = 6;   // one NWS issuance cycle plus slack
+  var box = document.getElementById('cond');
+  fetch('https://weather.brianbeals.com/conditions.json', {cache: 'no-store'})
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (c) {
+      var gen = new Date(c.generated_utc);
+      var ageH = (Date.now() - gen.getTime()) / 3600000;
+      var stale = !isFinite(ageH) || ageH > STALE_HOURS;
+      var bits = [];
+      if (c.wind && c.wind.speed) bits.push((c.wind.dir ? c.wind.dir + ' ' : '') + c.wind.speed);
+      if (c.water) bits.push(c.water);
+      if (c.storms) bits.push(c.storms);
+      if (c.gulf_seas) bits.push('Gulf ' + c.gulf_seas);
+
+      box.className = 'cond ' + (stale ? 'stale' : (c.verdict || 'caution'));
+      var head = stale
+        ? 'Conditions ' + (ageH > 48 ? 'well out of date' : Math.round(ageH) + ' h old')
+        : ({good: 'Good boating window', caution: 'Watch the sky', marginal: 'Marginal day'}[c.verdict] || 'Conditions');
+      box.innerHTML =
+        '<div class="hdr"><span class="dot"></span>' + head + '</div>'
+        + '<div class="det">' + bits.join(' &middot; ') + '</div>'
+        + '<div class="det">' + (c.issued ? 'Issued ' + c.issued + ' &middot; ' : '')
+        + '<a href="https://weather.brianbeals.com/">full forecast</a></div>';
+      box.style.display = 'block';
+    })
+    .catch(function (e) { console.warn('conditions unavailable:', e); });
+})();
 
 console.log('harbor-spots: '+reefs.length+' reefs, '+origins.length+' origins, '+((preserves.features||[]).length)+' preserves');
 </script>
