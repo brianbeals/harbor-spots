@@ -23,7 +23,11 @@ feature write-back, and front-end rendering. The full integration stack in one p
 
 ## Milestones
 
-Each is roughly one or two sessions. `harbor_spots.py` in this folder already implements 1 and 2.
+Each is roughly one or two sessions. `harbor_spots.py` now implements 1 through 4 and 6: it pulls
+the FWC reef, ramp, seagrass, preserve, and zone layers, tags each reef by preserve and by grass,
+and renders the Leaflet map published at harbor.brianbeals.com. Milestone 5 is half done in
+`publish_spots.py`, which uploads the shortlist as an ArcGIS content item; publishing that item
+into a hosted feature layer needs a signed-in user rather than an API key.
 
 **1. Setup and auth.** Create the ArcGIS Location Platform account, generate an API key, `pip install
 arcgis`, connect with `GIS`. Confirm a token round-trips. Web GIS entry point plus the auth model.
