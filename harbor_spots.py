@@ -59,7 +59,7 @@ RADIUS_NM   = 20              # nautical miles to include, applied in the browse
 MAG_VAR_W   = 6.6
 
 # Departure points that are not public boat ramps: marinas and a creek mouth.
-# See origins.yml, which also records why Brian's own dock is deliberately absent.
+# See origins.yml, which also records why private docks are never listed.
 ORIGINS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "origins.yml")
 COUNTIES    = ["Charlotte", "Lee"]   # Lee added for Pine Island Sound: Cabbage Key,
                                      # Burnt Store and the southern reefs sit below
@@ -138,7 +138,7 @@ def load_origins():
     Kept in YAML rather than fetched from a GIS layer: "a marina people actually
     leave from" is an editorial call no dataset encodes, the entries never move,
     and the build already depends on five external services. The file's comments
-    carry the reason Brian's private dock is excluded, which is why this is YAML
+    carry the rule that private docks are never listed, which is why this is YAML
     and not JSON.
     """
     if not os.path.exists(ORIGINS_FILE):
@@ -368,7 +368,7 @@ def preserve_for_point(lon, lat, index):
 # ---------------------------------------------------------------------------
 
 MAP_TEMPLATE = """<!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231E3A5F'/%3E%3Ctext x='16' y='15' text-anchor='middle' dominant-baseline='central' fill='white' font-family='system-ui' font-size='16' font-weight='800'%3EBB%3C/text%3E%3C/svg%3E">
@@ -390,7 +390,7 @@ MAP_TEMPLATE = """<!doctype html>
 .cred{margin-top:8px;padding-top:7px;border-top:1px solid #e5e8ec;font-size:11px;line-height:1.45;color:#6B7280}
 .cred .brand{display:flex;align-items:flex-start;gap:5px;margin-top:3px;color:#1E3A5F;font-weight:600}
 .cred .brand svg{flex:0 0 auto;margin-top:1px}
-.cred a{color:#2E86C1;font-weight:600;text-decoration:none}
+.cred a{color:#1B6CA8;font-weight:600;text-decoration:underline}
 .cred a:hover{text-decoration:underline}
 .ctl{position:absolute;z-index:1000;top:12px;right:12px;background:#fff;padding:9px 11px;font:12px system-ui;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);max-width:260px}
 .ctl label{display:block;font-weight:600;color:#1E3A5F;margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
@@ -404,20 +404,35 @@ MAP_TEMPLATE = """<!doctype html>
 .cond.marginal .dot{background:#C0392B}
 .cond.stale .dot{background:#8A8F98}
 .cond .det{color:#6B7280}
-.cond a{color:#2E86C1;font-weight:600;text-decoration:none}
-.cond a:hover{text-decoration:underline}</style>
+.cond a{color:#1B6CA8;font-weight:600;text-decoration:underline}
+.cond a:hover{text-decoration:underline}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.ctl select:focus-visible,.reefs button:focus-visible,.reefs summary:focus-visible,.lgnd a:focus-visible,.cond a:focus-visible{outline:2px solid #1E3A5F;outline-offset:2px}
+.leaflet-container:focus-visible{outline:3px solid #1E3A5F;outline-offset:-3px}
+.reefs{margin-top:8px;padding-top:7px;border-top:1px solid #e5e8ec}
+.reefs summary{cursor:pointer;font-weight:600;color:#1E3A5F;font-size:12px}
+.reefs ol{list-style:none;margin:6px 0 0;padding:0;max-height:38vh;overflow-y:auto}
+.reefs li{margin:0}
+.reefs button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:4px;padding:4px 4px;font:12px system-ui;color:#1A1A2A;cursor:pointer}
+.reefs button:hover{background:#eef3f8}
+.reefs .rd{color:#4B5563}</style>
 </head>
 <body>
-<div id="map"></div>
-<div class="ctl">
+<main class="ctl">
+  <h1 class="sr-only">Harbor Spots: artificial reefs, boat ramps, and regulated zones around Charlotte Harbor, Florida</h1>
   <label for="origin">Departing from</label>
   <select id="origin"></select>
-  <div class="meta" id="ometa"></div>
+  <div class="meta" id="ometa" aria-live="polite"></div>
+  <details class="reefs" id="reefbox">
+    <summary id="reefsum">Reefs in range</summary>
+    <ol id="reeflist" aria-label="Reefs in range, nearest first"></ol>
+  </details>
   <div class="cond" id="cond"></div>
-</div>
-<div class="lgnd"><b id="lgnd-origin">__RAMP__</b><br><span id="lgnd-count">reefs within __RADNM__ nm</span><br><span style="color:#E74C3C">&#9679;</span> selected origin &nbsp; <span style="color:#1D9E75">&#9679;</span> marina / creek<br><span style="color:#F39C12">&#9679;</span> boat ramp &nbsp; <span style="color:#2E86C1">&#9679;</span> reef &nbsp; <span style="color:#2874A6">&#9633;</span> preserve<br><span style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span style="color:#C9E68A">&#9632;</span> patchy grass<br><span style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span style="color:#845EF7">&#9632;</span> manatee zone
+</main>
+<div id="map" role="region" aria-label="Map of reefs, ramps, preserves, seagrass, and speed and manatee zones. Every reef is also listed in the Reefs in range panel."></div>
+<aside class="lgnd" aria-label="Legend and credits"><b id="lgnd-origin">__RAMP__</b><br><span id="lgnd-count">reefs within __RADNM__ nm</span><br><span aria-hidden="true" style="color:#E74C3C">&#9679;</span> selected origin &nbsp; <span aria-hidden="true" style="color:#1D9E75">&#9679;</span> marina / creek<br><span aria-hidden="true" style="color:#F39C12">&#9679;</span> boat ramp &nbsp; <span aria-hidden="true" style="color:#2E86C1">&#9679;</span> reef &nbsp; <span aria-hidden="true" style="color:#2874A6">&#9633;</span> preserve<br><span aria-hidden="true" style="color:#4CA64C">&#9632;</span> continuous grass &nbsp; <span aria-hidden="true" style="color:#C9E68A">&#9632;</span> patchy grass<br><span aria-hidden="true" style="color:#D6336C">&#9632;</span> restricted / speed zone<br><span aria-hidden="true" style="color:#845EF7">&#9632;</span> manatee zone
 <div class="cred">Live FWC, FL DEP, and NOAA feature services &middot; spatial joins &middot; rebuilt weekly
-<div class="brand"><svg viewBox="0 0 32 32" width="14" height="14" aria-label="Brian Beals"><rect width="32" height="32" rx="6" fill="#1E3A5F"/><text x="16" y="15" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="16" font-weight="800" letter-spacing="-0.04em">BB</text></svg><span>Brian Beals, LLC &middot; service-disabled veteran-owned small business &middot; <a href="https://brianbeals.com">brianbeals.com</a></span></div></div></div>
+<div class="brand"><svg viewBox="0 0 32 32" width="14" height="14" aria-hidden="true" focusable="false"><rect width="32" height="32" rx="6" fill="#1E3A5F"/><text x="16" y="15" text-anchor="middle" dominant-baseline="central" fill="#fff" font-family="-apple-system,system-ui,sans-serif" font-size="16" font-weight="800" letter-spacing="-0.04em">BB</text></svg><span>Brian Beals, LLC &middot; service-disabled veteran-owned small business &middot; <a href="https://brianbeals.com">brianbeals.com</a></span></div></div></aside>
 <script>
 var reefs = __DATA__;
 var preserves = __PRESERVES__;
@@ -505,21 +520,43 @@ function selectOrigin(i) {
   originDot = L.circleMarker([o.lat, o.lon], {radius:7, color:'#7B241C', fillColor:'#E74C3C', fillOpacity:1, weight:2})
     .addTo(map).bindPopup('<b>'+o.name+'</b><br>departure point');
 
-  var shown = 0;
+  var shown = 0, inRange = [];
   reefs.forEach(function(f){
     var d = nmBetween(o.lat, o.lon, f.lat, f.lon);
     if (d > RADIUS_NM) return;
     shown++;
     var brg = Math.round(bearingMag(o.lat, o.lon, f.lat, f.lon));
     var hdg = ('00' + brg).slice(-3);
-    L.circleMarker([f.lat, f.lon],
+    var mk = L.circleMarker([f.lat, f.lon],
       {radius:6, color:'#0B3D6B', fillColor:'#2E86C1', fillOpacity:0.95, weight:1})
      .bindPopup('<b>'+f.name+'</b><br><b>'+d.toFixed(1)+' nm &middot; '+hdg+'&deg;M</b><br>'
        +(f.depth?f.depth+' ft':'? ft')+' &middot; '+f.material
        +(f.preserve?'<br><i>'+f.preserve+'</i>':'')
        +(f.seagrass?'<br>on '+f.seagrass:''))
      .addTo(reefLayer);
+    inRange.push({f:f, d:d, hdg:hdg, mk:mk});
   });
+
+  // Keyboard and screen-reader path to every reef: map markers are SVG and
+  // cannot take focus, so the same data is offered as a list of buttons.
+  inRange.sort(function(a,b){ return a.d - b.d; });
+  var ol = document.getElementById('reeflist');
+  ol.innerHTML = '';
+  inRange.forEach(function(r){
+    var li = document.createElement('li');
+    var b = document.createElement('button');
+    b.type = 'button';
+    var depth = r.f.depth ? r.f.depth + ' ft' : 'depth unknown';
+    b.innerHTML = '<b></b> <span class="rd"></span>';
+    b.firstChild.textContent = r.f.name || 'Unnamed reef';
+    b.lastChild.textContent = r.d.toFixed(1) + ' nm, ' + r.hdg + '° magnetic, ' + depth;
+    b.addEventListener('click', function(){
+      map.setView(r.mk.getLatLng(), Math.max(map.getZoom(), 13));
+      r.mk.openPopup();
+    });
+    li.appendChild(b); ol.appendChild(li);
+  });
+  document.getElementById('reefsum').textContent = 'Reefs in range (' + shown + ')';
 
   map.fitBounds(ring.getBounds().pad(0.05));
   document.getElementById('lgnd-origin').textContent = o.name;

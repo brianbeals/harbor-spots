@@ -20,17 +20,10 @@
 # confirm each one. A pin 200 yards off the dock is a bearing that reads wrong on
 # a short run.
 
-# ── PRIVATE DOCK: DELIBERATELY ABSENT ─────────────────────────────────────────
-# Brian departs from his own dock. That point is NOT in this file and must not be
-# added. This map is public and is cited by name in the state/local capability
-# statement, so every origin in the selector gets published. A pin on the dock
-# publishes a home address.
-#
-# The Alligator Creek entry below is the stand-in and is also the more useful
-# number: the run out is no-wake, so a plan measured from the dock counts miles
-# nobody navigates by. Distance from where you reach open water is the figure you
-# would actually use. Alligator Creek is a public waterway shared by many boaters,
-# so naming it points at nobody.
+# ── NO PRIVATE DOCKS ──────────────────────────────────────────────────────────
+# Only public waterways, public ramps, and commercial marinas belong here. Every
+# origin in this file is published in the selector, so a private dock would
+# publish a home address. Do not add one.
 
 origins:
   - name: "Alligator Creek (mouth)"
@@ -41,10 +34,9 @@ origins:
     county: Charlotte
     default: true
     note: >
-      Where Brian reaches open water, and the default origin. Public waterway,
-      so naming it carries no address signal. Coordinate supplied by Brian from
-      the map, 2026-08-01. Landed 0.1 nm from the westernmost node of the OSM
-      Alligator Creek waterway, which is a good independent cross-check.
+      Default origin. A public waterway mouth, measured where the no-wake run
+      ends and open water begins. Cross-checked to within 0.1 nm of the
+      westernmost node of the OSM Alligator Creek waterway.
     verified: true
 
   - name: "Burnt Store Marina"

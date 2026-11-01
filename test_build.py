@@ -92,6 +92,17 @@ def main():
     check("legend explains the marina marker", "marina / creek" in h)
     check("legend no longer says 'origin ramp'", "origin ramp" not in h)
 
+    # Accessibility guards. This map is cited as past performance by an
+    # accessibility practice, so a regression here is a credibility problem.
+    check("page declares its language", '<html lang="en">' in h)
+    check("page has an h1", "<h1" in h)
+    check("controls sit in a main landmark", '<main class="ctl">' in h)
+    check("reefs have a keyboard path (list of buttons)", 'id="reeflist"' in h)
+    check("legend swatches hidden from screen readers",
+          not re.search(r'<span style="color:#', h))
+    check("no low-contrast link color (#2E86C1 is 3.97:1)",
+          "color:#2E86C1;font-weight" not in h)
+
     print()
     if fail:
         print(f"FAILED: {len(fail)} check(s)")

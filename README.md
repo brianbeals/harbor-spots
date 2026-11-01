@@ -77,8 +77,8 @@ Configuration lives at the top of `harbor_spots.py`:
 - `RADIUS_NM`: the range ring, applied in the browser.
 - `MAG_VAR_W`: magnetic variation, degrees west.
 
-Departure points that aren't public ramps live in `origins.yml`. That file also records why
-one particular departure point is deliberately absent from a public map.
+Departure points that aren't public ramps live in `origins.yml`. That file also records
+the rule that private docks are never listed, since every origin is published.
 
 ## Tests
 
