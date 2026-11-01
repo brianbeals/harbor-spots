@@ -13,12 +13,13 @@
 # kind: marina or kind: destination so the selector can group them and the map can
 # style the markers differently.
 #
-# ── COORDINATES ARE UNVERIFIED ────────────────────────────────────────────────
-# Every lat/lon below is my best value, not a surveyed one, and the origin drives
-# every distance and bearing on the page. Once the markers render, eyeball each
-# pin against the satellite layer and correct it. Flip `verified: true` as you
-# confirm each one. A pin 200 yards off the dock is a bearing that reads wrong on
-# a short run.
+# ── COORDINATES ───────────────────────────────────────────────────────────────
+# The origin drives every distance and bearing on the page, so each pin matters:
+# a pin 200 yards off the dock is a bearing that reads wrong on a short run.
+# Alligator Creek was supplied by hand and cross-checked against OSM. The marinas
+# were checked against their mapped business locations on 2026-11-01; the
+# original estimates were 0.1 to 1.5 nm off. Keep `verified: true` only for pins
+# that have been checked.
 
 # ── NO PRIVATE DOCKS ──────────────────────────────────────────────────────────
 # Only public waterways, public ramps, and commercial marinas belong here. Every
@@ -41,50 +42,50 @@ origins:
 
   - name: "Burnt Store Marina"
     kind: marina
-    lat: 26.7628
-    lon: -82.0578
+    lat: 26.759359
+    lon: -82.056212
     water: "Charlotte Harbor"
     county: Lee          # CHECK: sits near the Charlotte/Lee line
     note: "The marine forecast defaults to --home 'Burnt Store', so this is the reference point for conditions."
-    verified: false
+    verified: true
 
   - name: "Fishermen's Village Marina"
     kind: marina
-    lat: 26.9297
-    lon: -82.0637
+    lat: 26.927692
+    lon: -82.063797
     water: "Charlotte Harbor"
     county: Charlotte
-    verified: false
+    verified: true
 
   - name: "Laishley Park Municipal Marina"
     kind: marina
-    lat: 26.9333
-    lon: -82.0500
+    lat: 26.93869
+    lon: -82.051229
     water: "Peace River"
     county: Charlotte
     note: "Spelled Laishley, not Lashley."
-    verified: false
+    verified: true
 
   - name: "Gasparilla Marina"
     kind: marina
-    lat: 26.8347
-    lon: -82.2650
+    lat: 26.83572
+    lon: -82.26158
     water: "Placida Harbor"
     county: Charlotte
-    verified: false
+    verified: true
 
   - name: "Palm Island Marina"
     kind: marina
-    lat: 26.8628
-    lon: -82.2836
+    lat: 26.871335
+    lon: -82.308855
     water: "Lemon Bay"
     county: Charlotte
-    verified: false
+    verified: true
 
   - name: "Cabbage Key"
     kind: destination
-    lat: 26.6578
-    lon: -82.2242
+    lat: 26.656069
+    lon: -82.222462
     water: "Pine Island Sound"
     county: Lee
     note: >
@@ -92,4 +93,4 @@ origins:
       than where you start, but it works as an origin if you are staying over, and
       picking it answers the useful question of what is reachable from the island.
       Tagged destination rather than marina so the selector can group it apart.
-    verified: false
+    verified: true
